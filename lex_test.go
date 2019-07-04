@@ -31,6 +31,8 @@ func TestSanity(t *testing.T) {
 		{ScanCalc, "a += 5"},
 		{ScanCalc, "ಓ += 5"}, // Kannada letter 'Go' (https://en.wikipedia.org/wiki/Kannada)
 
+		{ScanCalc, "1 2. 3.3 .4 5e5 6.e6 7.7e7 .8e1 9e+9 10e-10"},
+
 		{ScanCalc | SkipSpace, "~!@#$"},
 		{ScanCalc | SkipSpace, "© ໙ ⾕ 㑇 /* clever */ ελπίδα /* hope */"},
 
@@ -67,7 +69,7 @@ its entirety.
 		}
 
 		if collected == test.input {
-			t.Logf("collected reslts match the original\n")
+			t.Logf("collected results match the original\n")
 		}
 	}
 }

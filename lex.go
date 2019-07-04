@@ -43,6 +43,8 @@ type Lexer struct {
 
 	// Do we want to limit letters in identifiers to be ASCII-only?
 	ASCII bool // defaults to false
+
+	input string // original "non-shrinking" input
 }
 
 //go:generate stringer -type=Token
@@ -117,6 +119,7 @@ const (
 	Octal              // octal integer with prefix ("0o" or "0O") or leading zero ("0377")
 	Decimal            // decimal integer
 	Hexadecimal        // hexadecimal integer with prefix ("0x" or "0X")
+	Floating           // floating point
 )
 
 const (
@@ -170,6 +173,9 @@ const (
 
 	ScanHexadecimal // number
 	SkipHexadecimal
+
+	ScanFloating // number
+	SkipFloating
 )
 const (
 	ScanComment = ScanBlock | ScanLine
@@ -181,10 +187,12 @@ const (
 	ScanInteger = ScanBinary | ScanOctal | ScanDecimal | ScanHexadecimal
 	SkipInteger = SkipBinary | SkipOctal | SkipDecimal | SkipHexadecimal
 
-	ScanNumber = ScanInteger // TBD: rational, complex, floating, ...
-	SkipNumber = SkipInteger
+	ScanNumber = ScanInteger | ScanFloating // TBD: rational, complex, ...
+	SkipNumber = SkipInteger | SkipFloating
 
-	ScanGo   = ScanCharacter | ScanComment | ScanIdentifier | ScanKeyword | ScanType | ScanOther | ScanOperator | ScanSpace | ScanString | ScanRune | ScanNumber
+	ScanGo = ScanCharacter | ScanComment | ScanIdentifier | ScanKeyword |
+		ScanType | ScanOther | ScanOperator | ScanSpace | ScanString |
+		ScanRune | ScanNumber
 	ScanCalc = ScanGo | ScanMath
 )
 
@@ -336,6 +344,10 @@ var operatorMap = map[string]tokenType{
 // t is the token type, such as identifier or number, and v is its value as a string, such as
 // "x" or "0153". Details (such as "ASCII-only" or "octal") are returned via the lex structure.
 func (lex *Lexer) Scan() (Token, string) {
+	if lex.Offset == 0 && lex.Bytes == 0 {
+		lex.input = lex.Input // first call, set input to access original Input
+	}
+
 	for lex.Input != "" {
 		// advance input position counters past prior token
 		lex.Offset += lex.Bytes // advance through input bytes
@@ -351,6 +363,8 @@ func (lex *Lexer) Scan() (Token, string) {
 		// Peek at the next character in input. If it decodes as an invalid Unicode character, the
 		// value of c will be '\uFFFD'.
 		c, size := utf8.DecodeRuneInString(lex.Input)
+
+		// fmt.Printf("offset=%5d, starts=%q\n", lex.Offset, lex.input[lex.Offset:lex.Offset+8])
 
 		// Decode next token using this first character as anchor
 		switch {
@@ -427,12 +441,77 @@ func (lex *Lexer) Scan() (Token, string) {
 			}
 		// single character operators "{}[]():;,." are the most frequent in go source code
 		case lex.mode(ScanOperator) && strings.ContainsRune("{}[]():;,.", c):
-			lex.Value = lex.next(1)
+			lex.Chars, lex.Bytes = 1, 1
+
+			// is this a real number?
+			real := false
+			if lex.Input[0] == '.' && len(lex.Input) > 1 {
+				// extract rest of number (if any)
+				ch := lex.Input[lex.Bytes]
+				if ch < '0' || ch > '9' {
+					goto doneA
+				}
+				for '0' <= ch && ch <= '9' { // move the digit to the token
+					lex.Chars++
+					lex.Bytes++
+					real = true
+					if len(lex.Input) > lex.Bytes {
+						ch = lex.Input[lex.Bytes]
+					} else {
+						break
+					}
+				}
+				if ch == 'e' || ch == 'E' { // move the 'e' to the token
+					lex.Chars++
+					lex.Bytes++
+					real = true
+					if len(lex.Input) > lex.Bytes {
+						ch = lex.Input[lex.Bytes]
+					} else {
+						goto doneA
+					}
+					if ch == '+' || ch == '-' { // move the '+/-' to the token
+						lex.Chars++
+						lex.Bytes++
+						real = true
+						if len(lex.Input) > lex.Bytes {
+							ch = lex.Input[lex.Bytes]
+						} else {
+							// actually, a parse error
+							goto doneA
+						}
+					}
+					for '0' <= ch && ch <= '9' { // move the digit to the token
+						lex.Chars++
+						lex.Bytes++
+						real = true
+						if len(lex.Input) > lex.Bytes {
+							ch = lex.Input[lex.Bytes]
+						} else {
+							break
+						}
+					}
+				}
+			doneA:
+			}
+			// yes it is. do we want to have parsed it?
+			if real {
+				lex.Value = lex.next(lex.Bytes)
+				lex.Type, lex.Subtype = Number, Floating
+				if !lex.mode(SkipFloating) {
+					return lex.Type, lex.Value
+				}
+				continue
+			}
+
+			// no, it is a single-character operator (almost always)
 			lex.Chars, lex.Bytes = 1, 1 // matched characters are all single-byte
+			lex.Value = lex.next(lex.Bytes)
 			lex.Type, lex.Subtype = Operator, OperatorGo
 			if !lex.mode(SkipOperator) {
 				return lex.Type, lex.Value
 			}
+
 		// identifier: letter/underscore then letter/underscore/digit; letters optionally ASCII-only
 		case lex.mode(ScanIdentifier|ScanKeyword|ScanType) && (('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || (c == '_') || (!lex.ASCII && unicode.IsLetter(c))):
 			lex.Chars, lex.Bytes = lex.match(func(c rune) bool {
@@ -533,7 +612,7 @@ func (lex *Lexer) Scan() (Token, string) {
 				return lex.Type, lex.Value
 			}
 		// decimal or legacy-form octal with leading zero "280", "0262"
-		case lex.mode(ScanDecimal|ScanOctal) && ('0' <= c && c <= '9'):
+		case lex.mode(ScanDecimal|ScanOctal|ScanFloating) && ('0' <= c && c <= '9'):
 			lex.Chars, lex.Bytes = lex.match(func(c rune) bool { return ('0' <= c && c <= '9') || c == '_' })
 			// note: matched characters>1 restriction is to treat "0" as decimal zero and "00" as octal zero.
 			if lex.Chars > 1 && lex.Input[0] == '0' && !strings.ContainsAny(lex.Input[:lex.Bytes], "89") {
@@ -547,6 +626,70 @@ func (lex *Lexer) Scan() (Token, string) {
 					continue
 				}
 			} else {
+				//is this a real number?
+				real := false
+				if len(lex.Input) > lex.Bytes {
+					ch := lex.Input[lex.Bytes]
+					// extract rest of number
+					if ch == '.' { // move the decimal point to the token
+						lex.Chars++
+						lex.Bytes++
+						if len(lex.Input) > lex.Bytes {
+							ch = lex.Input[lex.Bytes]
+						}
+						for '0' <= ch && ch <= '9' { // move the digit to the token
+							lex.Chars++
+							lex.Bytes++
+							real = true
+							if len(lex.Input) > lex.Bytes {
+								ch = lex.Input[lex.Bytes]
+							} else {
+								break
+							}
+						}
+					}
+					if ch == 'e' || ch == 'E' { // move the 'e' to the token
+						lex.Chars++
+						lex.Bytes++
+						real = true
+						if len(lex.Input) > lex.Bytes {
+							ch = lex.Input[lex.Bytes]
+						} else {
+							goto done
+						}
+						if ch == '+' || ch == '-' { // move the '+/-' to the token
+							lex.Chars++
+							lex.Bytes++
+							real = true
+							if len(lex.Input) > lex.Bytes {
+								ch = lex.Input[lex.Bytes]
+							} else {
+								// actually, a parse error
+								goto done
+							}
+						}
+						for '0' <= ch && ch <= '9' { // move the digit to the token
+							lex.Chars++
+							lex.Bytes++
+							real = true
+							if len(lex.Input) > lex.Bytes {
+								ch = lex.Input[lex.Bytes]
+							} else {
+								break
+							}
+						}
+					}
+				done:
+				}
+				// matched token is floating point. do we want to have parsed it?
+				if real {
+					lex.Value = lex.next(lex.Bytes)
+					lex.Type, lex.Subtype = Number, Floating
+					if !lex.mode(SkipFloating) {
+						return lex.Type, lex.Value
+					}
+					continue
+				}
 				// matched token is decimal. do we want to have parsed it?
 				if lex.mode(ScanDecimal) { // yes...
 					lex.Value = lex.next(lex.Bytes)
@@ -558,8 +701,8 @@ func (lex *Lexer) Scan() (Token, string) {
 				}
 			}
 			// ...no, we did not want to parse it. it's octal when we don't want octal, or likewise
-			// with decimal; so disregard the match and handle as a single-character case.
-			// fallthrough
+			// with decimal and real; so disregard the match and handle as a single-character
+			// case.
 			lex.Value = lex.next(size) // size is byte width of scanned UTF-8 rune
 			lex.Chars, lex.Bytes = 1, size
 			// lex.Type, lex.Subtype = lexCharacter, lexToken(c) // preferred API, but to match scanner...
@@ -641,4 +784,31 @@ func If(test bool, a, b int) int {
 		return a
 	}
 	return b
+}
+
+// Extract line containing current position
+func (lex *Lexer) GetLine() string {
+	here := lex.Offset
+	// fmt.Printf("here=%d, lex.input[here..]=%s\n", here, lex.input[here:here+8])
+	if lex.input[here] == '\n' {
+		return "\n"
+	}
+	//look back
+	prior := strings.LastIndex(lex.input[:here], "\n")
+	if prior == -1 {
+		prior = 0 // start of input
+	} else {
+		prior++ // line starts at charcter after prior newline
+	}
+
+	// look forward
+	next := strings.Index(lex.input[here:], "\n")
+	if next == -1 {
+		next = len(lex.input) - 1 // line ends with input and is unterminated
+	} else {
+		next += here // we scanned only the tail of the string
+	}
+
+	// line is range from just after last newline to just after next
+	return lex.input[prior : next+1]
 }
