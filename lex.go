@@ -843,11 +843,11 @@ func (lex *Lexer) GetLine() string {
 	// look forward
 	next := bytes.Index(lex.input[here:], []byte("\n"))
 	if next == -1 {
-		next = len(lex.input) - 1 // line ends with input and is unterminated
+		next = len(lex.input) // line ends with input and is unterminated
 	} else {
 		next += here // we scanned only the tail of the string
 	}
 
-	// line is range from just after last newline to just after next
-	return string(lex.input[prior : next+1])
+	// line is range from just after last newline to just before next
+	return string(lex.input[prior:next])
 }
