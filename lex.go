@@ -1,6 +1,7 @@
 package lex
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"unicode"
@@ -26,7 +27,7 @@ func (p Position) String() string {
 
 // simple lexical scanner
 type Lexer struct {
-	Input string
+	Input []byte
 
 	// details of the most recently parsed token
 	Value   string // token value as a string: "0xfade"
@@ -44,7 +45,7 @@ type Lexer struct {
 	// Do we want to limit letters in identifiers to be ASCII-only?
 	ASCII bool // defaults to false
 
-	input string // original "non-shrinking" input
+	input []byte // original "non-shrinking" input
 }
 
 //go:generate stringer -type=Token
@@ -348,7 +349,7 @@ func (lex *Lexer) Scan() (Token, string) {
 		lex.input = lex.Input // first call, set input to access original Input
 	}
 
-	for lex.Input != "" {
+	for len(lex.Input) > 0 {
 		// advance input position counters past prior token
 		lex.Offset += lex.Bytes // advance through input bytes
 		if nl := strings.Count(lex.Value, "\n"); nl == 0 {
@@ -362,7 +363,7 @@ func (lex *Lexer) Scan() (Token, string) {
 
 		// Peek at the next character in input. If it decodes as an invalid Unicode character, the
 		// value of c will be '\uFFFD'.
-		c, size := utf8.DecodeRuneInString(lex.Input)
+		c, size := utf8.DecodeRune(lex.Input)
 
 		// fmt.Printf("offset=%5d, starts=%q\n", lex.Offset, lex.input[lex.Offset:lex.Offset+8])
 
@@ -377,8 +378,8 @@ func (lex *Lexer) Scan() (Token, string) {
 				return lex.Type, lex.Value
 			}
 		// line comment delimited by slash-slash and newline: "//" .* "\n"
-		case lex.mode(ScanLine) && strings.HasPrefix(lex.Input, "//"):
-			index := strings.IndexByte(lex.Input, '\n')     // newline, if present, terminates...
+		case lex.mode(ScanLine) && bytes.HasPrefix(lex.Input, []byte("//")):
+			index := bytes.IndexByte(lex.Input, '\n')       // newline, if present, terminates...
 			lex.Value = lex.next(If(index > -1, index, -1)) // ...but is not part of the comment.
 			lex.Chars, lex.Bytes = utf8.RuneCountInString(lex.Value), len(lex.Value)
 			lex.Type, lex.Subtype = Comment, Line
@@ -386,8 +387,8 @@ func (lex *Lexer) Scan() (Token, string) {
 				return lex.Type, lex.Value
 			}
 		// block comment delimited by slash-star and star-slash: "/*" .* "*/"
-		case lex.mode(ScanBlock) && strings.HasPrefix(lex.Input, "/*"):
-			index := strings.Index(lex.Input, "*/")
+		case lex.mode(ScanBlock) && bytes.HasPrefix(lex.Input, []byte("/*")):
+			index := bytes.Index(lex.Input, []byte("*/"))
 			lex.Value = lex.next(If(index > -1, index+2, -1))
 			lex.Chars, lex.Bytes = utf8.RuneCountInString(lex.Value), len(lex.Value)
 			lex.Type, lex.Subtype = Comment, Block
@@ -398,12 +399,13 @@ func (lex *Lexer) Scan() (Token, string) {
 		case lex.mode(ScanRune) && c == '\'':
 			escaped := false
 			index := 0
-			for index, c = range lex.Input {
-				if index > 0 && c == '\'' && !escaped {
+			var ch byte
+			for index, ch = range lex.Input {
+				if index > 0 && ch == '\'' && !escaped {
 					break
 				} else if escaped {
 					escaped = false
-				} else if c == '\\' {
+				} else if ch == '\\' {
 					escaped = true
 				}
 				// else if c == '\n' {
@@ -421,8 +423,9 @@ func (lex *Lexer) Scan() (Token, string) {
 		case lex.mode(ScanQuote) && c == '"':
 			escaped := false
 			index := 0
-			for index, c = range lex.Input {
-				if index > 0 && c == '"' && !escaped {
+			var ch byte
+			for index, ch = range lex.Input {
+				if index > 0 && ch == '"' && !escaped {
 					break
 				} else if escaped {
 					escaped = false
@@ -518,7 +521,7 @@ func (lex *Lexer) Scan() (Token, string) {
 				return ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || (c == '_') || ('0' <= c && c <= '9') || (!lex.ASCII && unicode.IsLetter(c))
 			})
 			// is it a predefined identifier? (historical note: the initial role of hash tables)
-			if id, ok := predefinedMap[lex.Input[:lex.Bytes]]; ok {
+			if id, ok := predefinedMap[string(lex.Input[:lex.Bytes])]; ok {
 				lex.Value = lex.next(lex.Bytes)
 				lex.Type, lex.Subtype = id.Type, id.Subtype
 				// if (lex.Type == Keyword && !lex.mode(SkipKeyword)) ||
@@ -550,14 +553,39 @@ func (lex *Lexer) Scan() (Token, string) {
 			}
 		// multi-character operators: "+", "<<", "&^=", ...
 		case lex.mode(ScanOperator) && strings.ContainsRune("+-*/^%<>&|!=", c):
-			match := ""
-			for _, op := range []string{"||", "|=", ">>=", ">>", ">=", "==", "<=", "<<=", "<<", "<-", "+=", "++", "^=", "%=", "&=", "&^=", "&^", "&&", "/=", "*=", "...", "!=", ":=", "-=", "--"} {
-				if strings.HasPrefix(lex.Input, op) {
-					match = op
+			match := 0
+			for _, op := range [][]byte{
+				[]byte("||"),
+				[]byte("|="),
+				[]byte(">>="),
+				[]byte(">>"),
+				[]byte(">="),
+				[]byte("=="),
+				[]byte("<="),
+				[]byte("<<="),
+				[]byte("<<"),
+				[]byte("<-"),
+				[]byte("+="),
+				[]byte("++"),
+				[]byte("^="),
+				[]byte("%="),
+				[]byte("&="),
+				[]byte("&^="),
+				[]byte("&^"),
+				[]byte("&&"),
+				[]byte("/="),
+				[]byte("*="),
+				[]byte("..."),
+				[]byte("!="),
+				[]byte(":="),
+				[]byte("-="),
+				[]byte("--")} {
+				if bytes.HasPrefix(lex.Input, op) {
+					match = len(op)
 					break
 				}
 			}
-			lex.Value = lex.next(If(match != "", len(match), size))
+			lex.Value = lex.next(If(match != 0, match, size))
 			lex.Chars, lex.Bytes = len(lex.Value), len(lex.Value) // matched characters are all single-byte
 			lex.Type, lex.Subtype = Operator, OperatorGo
 			if !lex.mode(SkipOperator) {
@@ -571,8 +599,8 @@ func (lex *Lexer) Scan() (Token, string) {
 			// above uses, the back quote is also sometimes referred to as a back prime, back tick,
 			// birk, blugle, quasiquote, and unapostrophe."
 			// https://www.computerhope.com/jargon/b/backquot.htm
-			prefix := lex.next(1)                      // the leading unapostrophe
-			index := strings.IndexByte(lex.Input, '`') // the trailing unapostrophe
+			prefix := lex.next(1)                    // the leading unapostrophe
+			index := bytes.IndexByte(lex.Input, '`') // the trailing unapostrophe
 			lex.Value = prefix + lex.next(If(index > -1, index+1, -1))
 			lex.Chars, lex.Bytes = utf8.RuneCountInString(lex.Value), len(lex.Value)
 			lex.Type, lex.Subtype = String, Raw
@@ -615,7 +643,7 @@ func (lex *Lexer) Scan() (Token, string) {
 		case lex.mode(ScanDecimal|ScanOctal|ScanFloating) && ('0' <= c && c <= '9'):
 			lex.Chars, lex.Bytes = lex.match(func(c rune) bool { return ('0' <= c && c <= '9') || c == '_' })
 			// note: matched characters>1 restriction is to treat "0" as decimal zero and "00" as octal zero.
-			if lex.Chars > 1 && lex.Input[0] == '0' && !strings.ContainsAny(lex.Input[:lex.Bytes], "89") {
+			if lex.Chars > 1 && lex.Input[0] == '0' && !bytes.ContainsAny(lex.Input[:lex.Bytes], "89") {
 				// matched token is legacy octal. do we want to have parsed it?
 				if lex.mode(ScanOctal) { // yes...
 					lex.Value = lex.next(lex.Bytes)
@@ -712,16 +740,27 @@ func (lex *Lexer) Scan() (Token, string) {
 			}
 		// extra operators: math-symbol synonyms ("−×÷⊕") and exponentiation ("**" and "↑")
 		case lex.mode(ScanMath) && strings.ContainsRune("−×÷⊕↑", c):
-			match := ""
-			for _, op := range []string{"**=", "**", "−=", "×=", "÷=", "⊕=", "↑="} {
-				if strings.HasPrefix(lex.Input, op) {
-					match = op
+			chars := 2
+			match := 0
+			for index, op := range [][]byte{
+				[]byte("**="),
+				[]byte("**"),
+				[]byte("−="),
+				[]byte("×="),
+				[]byte("÷="),
+				[]byte("⊕="),
+				[]byte("↑=")} {
+				if bytes.HasPrefix(lex.Input, op) {
+					match = len(op)
+					if index == 0 {
+						chars = 3
+					}
 					break
 				}
 			}
-			if match != "" {
-				lex.Value = lex.next(len(match)) // multicharacter operator detected by HasPrefix() lookahead
-				lex.Chars, lex.Bytes = If(match == "**=", 3, 2), len(lex.Value)
+			if match != 0 {
+				lex.Value = lex.next(match) // multicharacter operator detected by HasPrefix() lookahead
+				lex.Chars, lex.Bytes = chars, len(lex.Value)
 			} else {
 				lex.Value = lex.next(size) // single character operator matched by ContainsRune()
 				lex.Chars, lex.Bytes = 1, len(lex.Value)
@@ -747,11 +786,11 @@ func (lex *Lexer) Scan() (Token, string) {
 // Match characters in the input based on matchFunc(). Returns the number of characters (code
 // points) matched and the number of bytes they contain. When chars==bytes, input is ASCII.
 func (lex *Lexer) match(matchFunc func(rune) bool) (chars, bytes int) {
-	c, size := utf8.DecodeRuneInString(lex.Input[bytes:])
+	c, size := utf8.DecodeRune(lex.Input[bytes:])
 	for bytes < len(lex.Input) && matchFunc(c) {
 		chars += 1
 		bytes += size
-		c, size = utf8.DecodeRuneInString(lex.Input[bytes:])
+		c, size = utf8.DecodeRune(lex.Input[bytes:])
 	}
 	return
 }
@@ -761,11 +800,11 @@ func (lex *Lexer) match(matchFunc func(rune) bool) (chars, bytes int) {
 func (lex *Lexer) next(bytes int) (s string) {
 	switch {
 	case bytes < 0:
-		s, lex.Input = lex.Input, ""
+		s, lex.Input = string(lex.Input), nil
 		// fmt.Printf("EAT count=%d text=%q\n", len(s), s)
 		// fmt.Printf("!EAT count=%d line=%d trim=%q\n", len(s), lex.Line, s[:32])
 	default:
-		s, lex.Input = lex.Input[:bytes], lex.Input[bytes:]
+		s, lex.Input = string(lex.Input[:bytes]), lex.Input[bytes:]
 	}
 	return
 }
@@ -794,7 +833,7 @@ func (lex *Lexer) GetLine() string {
 		return "\n"
 	}
 	//look back
-	prior := strings.LastIndex(lex.input[:here], "\n")
+	prior := bytes.LastIndex(lex.input[:here], []byte("\n"))
 	if prior == -1 {
 		prior = 0 // start of input
 	} else {
@@ -802,7 +841,7 @@ func (lex *Lexer) GetLine() string {
 	}
 
 	// look forward
-	next := strings.Index(lex.input[here:], "\n")
+	next := bytes.Index(lex.input[here:], []byte("\n"))
 	if next == -1 {
 		next = len(lex.input) - 1 // line ends with input and is unterminated
 	} else {
@@ -810,5 +849,5 @@ func (lex *Lexer) GetLine() string {
 	}
 
 	// line is range from just after last newline to just after next
-	return lex.input[prior : next+1]
+	return string(lex.input[prior : next+1])
 }

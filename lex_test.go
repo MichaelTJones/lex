@@ -57,7 +57,7 @@ its entirety.
 
 	for i, test := range tests {
 		// lex := &Lex{Input: test.input, Mode: test.mode}
-		lex := &Lexer{Input: test.input, Mode: test.mode, Position: Position{Filename: "ψ"}}
+		lex := &Lexer{Input: []byte(test.input), Mode: test.mode, Position: Position{Filename: "ψ"}}
 		collected := ""
 
 		t.Logf("test #%v\n", i)
