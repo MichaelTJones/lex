@@ -63,7 +63,8 @@ its entirety.
 		t.Logf("test #%v\n", i)
 		t.Logf("  input = %q\n", test.input)
 
-		for tok, text := lex.Scan(); tok != EOF; tok, text = lex.Scan() {
+		for tok, bytes := lex.Scan(); tok != EOF; tok, bytes = lex.Scan() {
+			text := string(bytes)
 			collected += text
 			t.Logf("  token = %-16v subtype = %1d  position = %-10v  text = %q\n", tok, lex.Subtype, lex.Position, text)
 		}

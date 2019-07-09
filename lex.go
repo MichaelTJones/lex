@@ -30,7 +30,7 @@ type Lexer struct {
 	Input []byte
 
 	// details of the most recently parsed token
-	Value   string // token value as a string: "0xfade"
+	Value   []byte // token value as a string: "0xfade"
 	Type    Token  // token type: lexNumber
 	Subtype Token  // token subtype: lexHexadecimal [Number:Integer:Hexadecimal]
 	Chars   int    // size of token in code points
@@ -344,7 +344,7 @@ var operatorMap = map[string]tokenType{
 // Scan returns the next token, which is either a structured element or a single character.
 // t is the token type, such as identifier or number, and v is its value as a string, such as
 // "x" or "0153". Details (such as "ASCII-only" or "octal") are returned via the lex structure.
-func (lex *Lexer) Scan() (Token, string) {
+func (lex *Lexer) Scan() (Token, []byte) {
 	if lex.Offset == 0 && lex.Bytes == 0 {
 		lex.input = lex.Input // first call, set input to access original Input
 	}
@@ -352,11 +352,11 @@ func (lex *Lexer) Scan() (Token, string) {
 	for len(lex.Input) > 0 {
 		// advance input position counters past prior token
 		lex.Offset += lex.Bytes // advance through input bytes
-		if nl := strings.Count(lex.Value, "\n"); nl == 0 {
+		if nl := bytes.Count(lex.Value, []byte("\n")); nl == 0 {
 			lex.Column += lex.Chars // no newline, so advance through this line
 		} else { // one or more newlines, so reset column and advance in last line
-			last := strings.LastIndexByte(lex.Value, '\n')            // just before last line
-			lex.Column = utf8.RuneCountInString(lex.Value[last:]) - 1 // -1 for the prefix '\n'
+			last := bytes.LastIndexByte(lex.Value, '\n')      // just before last line
+			lex.Column = utf8.RuneCount(lex.Value[last:]) - 1 // -1 for the prefix '\n'
 			lex.Line += nl
 		}
 		// ...both offset and (line,column) now indicate the start of the next token.
@@ -381,7 +381,7 @@ func (lex *Lexer) Scan() (Token, string) {
 		case lex.mode(ScanLine) && bytes.HasPrefix(lex.Input, []byte("//")):
 			index := bytes.IndexByte(lex.Input, '\n')       // newline, if present, terminates...
 			lex.Value = lex.next(If(index > -1, index, -1)) // ...but is not part of the comment.
-			lex.Chars, lex.Bytes = utf8.RuneCountInString(lex.Value), len(lex.Value)
+			lex.Chars, lex.Bytes = utf8.RuneCount(lex.Value), len(lex.Value)
 			lex.Type, lex.Subtype = Comment, Line
 			if !lex.mode(SkipLine) {
 				return lex.Type, lex.Value
@@ -390,7 +390,7 @@ func (lex *Lexer) Scan() (Token, string) {
 		case lex.mode(ScanBlock) && bytes.HasPrefix(lex.Input, []byte("/*")):
 			index := bytes.Index(lex.Input, []byte("*/"))
 			lex.Value = lex.next(If(index > -1, index+2, -1))
-			lex.Chars, lex.Bytes = utf8.RuneCountInString(lex.Value), len(lex.Value)
+			lex.Chars, lex.Bytes = utf8.RuneCount(lex.Value), len(lex.Value)
 			lex.Type, lex.Subtype = Comment, Block
 			if !lex.mode(SkipBlock) {
 				return lex.Type, lex.Value
@@ -413,7 +413,7 @@ func (lex *Lexer) Scan() (Token, string) {
 				// }
 			}
 			lex.Value = lex.next(If(index < len(lex.Input)-1, index+1, -1))
-			lex.Chars, lex.Bytes = utf8.RuneCountInString(lex.Value), len(lex.Value)
+			lex.Chars, lex.Bytes = utf8.RuneCount(lex.Value), len(lex.Value)
 			lex.Type, lex.Subtype = Rune, 0
 			if !lex.mode(SkipRune) {
 				return lex.Type, lex.Value
@@ -437,7 +437,7 @@ func (lex *Lexer) Scan() (Token, string) {
 				// }
 			}
 			lex.Value = lex.next(If(index < len(lex.Input)-1, index+1, -1))
-			lex.Chars, lex.Bytes = utf8.RuneCountInString(lex.Value), len(lex.Value)
+			lex.Chars, lex.Bytes = utf8.RuneCount(lex.Value), len(lex.Value)
 			lex.Type, lex.Subtype = String, Quote
 			if !lex.mode(SkipQuote) {
 				return lex.Type, lex.Value
@@ -601,8 +601,8 @@ func (lex *Lexer) Scan() (Token, string) {
 			// https://www.computerhope.com/jargon/b/backquot.htm
 			prefix := lex.next(1)                    // the leading unapostrophe
 			index := bytes.IndexByte(lex.Input, '`') // the trailing unapostrophe
-			lex.Value = prefix + lex.next(If(index > -1, index+1, -1))
-			lex.Chars, lex.Bytes = utf8.RuneCountInString(lex.Value), len(lex.Value)
+			lex.Value = append(prefix, lex.next(If(index > -1, index+1, -1))...)
+			lex.Chars, lex.Bytes = utf8.RuneCount(lex.Value), len(lex.Value)
 			lex.Type, lex.Subtype = String, Raw
 			if !lex.mode(SkipRaw) {
 				return lex.Type, lex.Value
@@ -611,7 +611,7 @@ func (lex *Lexer) Scan() (Token, string) {
 		case lex.mode(ScanBinary) && c == '0' && len(lex.Input) > 1 && (lex.Input[1] == 'b' || lex.Input[1] == 'B'):
 			prefix := lex.next(2) // to preserve prefix case
 			_, bytes := lex.match(func(c rune) bool { return ('0' <= c && c <= '1') || c == '_' })
-			lex.Value = prefix + lex.next(bytes)
+			lex.Value = append(prefix, lex.next(bytes)...)
 			lex.Chars, lex.Bytes = len(lex.Value), len(lex.Value) // length with prefix
 			lex.Type, lex.Subtype = Number, Binary
 			if !lex.mode(SkipBinary) {
@@ -621,7 +621,7 @@ func (lex *Lexer) Scan() (Token, string) {
 		case lex.mode(ScanOctal) && c == '0' && len(lex.Input) > 1 && (lex.Input[1] == 'o' || lex.Input[1] == 'O'):
 			prefix := lex.next(2) // to preserve prefix case
 			_, bytes := lex.match(func(c rune) bool { return ('0' <= c && c <= '7') || c == '_' })
-			lex.Value = prefix + lex.next(bytes)
+			lex.Value = append(prefix, lex.next(bytes)...)
 			lex.Chars, lex.Bytes = len(lex.Value), len(lex.Value) // length with prefix
 			lex.Type, lex.Subtype = Number, Octal
 			if !lex.mode(SkipOctal) {
@@ -633,7 +633,7 @@ func (lex *Lexer) Scan() (Token, string) {
 			_, bytes := lex.match(func(c rune) bool {
 				return ('0' <= c && c <= '9') || ('a' <= c && c <= 'f') || ('A' <= c && c <= 'F') || c == '_'
 			})
-			lex.Value = prefix + lex.next(bytes)
+			lex.Value = append(prefix, lex.next(bytes)...)
 			lex.Chars, lex.Bytes = len(lex.Value), len(lex.Value) // length with prefix
 			lex.Type, lex.Subtype = Number, Hexadecimal
 			if !lex.mode(SkipHexadecimal) {
@@ -780,7 +780,7 @@ func (lex *Lexer) Scan() (Token, string) {
 			}
 		}
 	}
-	return EOF, ""
+	return EOF, nil
 }
 
 // Match characters in the input based on matchFunc(). Returns the number of characters (code
@@ -797,14 +797,14 @@ func (lex *Lexer) match(matchFunc func(rune) bool) (chars, bytes int) {
 
 // Move bytes from the lex input source and return them to the caller. When requested byte count is
 // less than one, the remainder of the input stream is moved and future reads will result in EOF.
-func (lex *Lexer) next(bytes int) (s string) {
+func (lex *Lexer) next(bytes int) (s []byte) {
 	switch {
 	case bytes < 0:
-		s, lex.Input = string(lex.Input), nil
+		s, lex.Input = lex.Input, nil
 		// fmt.Printf("EAT count=%d text=%q\n", len(s), s)
 		// fmt.Printf("!EAT count=%d line=%d trim=%q\n", len(s), lex.Line, s[:32])
 	default:
-		s, lex.Input = string(lex.Input[:bytes]), lex.Input[bytes:]
+		s, lex.Input = lex.Input[:bytes], lex.Input[bytes:]
 	}
 	return
 }
@@ -826,11 +826,11 @@ func If(test bool, a, b int) int {
 }
 
 // Extract line containing current position
-func (lex *Lexer) GetLine() string {
+func (lex *Lexer) GetLine() []byte {
 	here := lex.Offset
 	// fmt.Printf("here=%d, lex.input[here..]=%s\n", here, lex.input[here:here+8])
 	if lex.input[here] == '\n' {
-		return "\n"
+		return []byte("\n")
 	}
 	//look back
 	prior := bytes.LastIndex(lex.input[:here], []byte("\n"))
@@ -849,5 +849,5 @@ func (lex *Lexer) GetLine() string {
 	}
 
 	// line is range from just after last newline to just before next
-	return string(lex.input[prior:next])
+	return lex.input[prior:next]
 }
