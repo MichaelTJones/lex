@@ -341,6 +341,16 @@ var operatorMap = map[string]tokenType{
 }
 */
 
+// character class definitions (defined once and unchanged thereafter)
+var operator0 = newCharClass().String("{}[]():;,.")   // single-character operators
+var operator1 = newCharClass().String("+-*/^%<>&|!=") // first char of muti-character operators
+var identifier1 = newCharClass().Range('a', 'z').Range('A', 'Z').Byte('_')
+var identifier2 = newCharClass().Range('a', 'z').Range('A', 'Z').Byte('_').Range('0', '9')
+var binary1 = newCharClass().Range('0', '1').Byte('_')
+var octal1 = newCharClass().Range('0', '7').Byte('_')
+var decimal1 = newCharClass().Range('0', '9').Byte('_')
+var hexadecimal1 = newCharClass().Range('0', '9').Range('a', 'f').Range('A', 'F').Byte('_')
+
 // Scan returns the next token, which is either a structured element or a single character.
 // t is the token type, such as identifier or number, and v is its value as a string, such as
 // "x" or "0153". Details (such as "ASCII-only" or "octal") are returned via the lex structure.
@@ -443,7 +453,8 @@ func (lex *Lexer) Scan() (Token, []byte) {
 				return lex.Type, lex.Value
 			}
 		// single character operators "{}[]():;,." are the most frequent in go source code
-		case lex.mode(ScanOperator) && strings.ContainsRune("{}[]():;,.", c):
+		// case lex.mode(ScanOperator) && strings.ContainsRune("{}[]():;,.", c):
+		case lex.mode(ScanOperator) && operator0.test(c):
 			lex.Chars, lex.Bytes = 1, 1
 
 			// is this a real number?
@@ -516,9 +527,10 @@ func (lex *Lexer) Scan() (Token, []byte) {
 			}
 
 		// identifier: letter/underscore then letter/underscore/digit; letters optionally ASCII-only
-		case lex.mode(ScanIdentifier|ScanKeyword|ScanType) && (('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || (c == '_') || (!lex.ASCII && unicode.IsLetter(c))):
+		// case lex.mode(ScanIdentifier|ScanKeyword|ScanType) && (('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || (c == '_') || (!lex.ASCII && unicode.IsLetter(c))):
+		case lex.mode(ScanIdentifier|ScanKeyword|ScanType) && (identifier1.test(c) || (!lex.ASCII && unicode.IsLetter(c))):
 			lex.Chars, lex.Bytes = lex.match(func(c rune) bool {
-				return ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || (c == '_') || ('0' <= c && c <= '9') || (!lex.ASCII && unicode.IsLetter(c))
+				return identifier2.test(c) || (!lex.ASCII && unicode.IsLetter(c))
 			})
 			// is it a predefined identifier? (historical note: the initial role of hash tables)
 			if id, ok := predefinedMap[string(lex.Input[:lex.Bytes])]; ok {
@@ -552,7 +564,8 @@ func (lex *Lexer) Scan() (Token, []byte) {
 				return lex.Type, lex.Value
 			}
 		// multi-character operators: "+", "<<", "&^=", ...
-		case lex.mode(ScanOperator) && strings.ContainsRune("+-*/^%<>&|!=", c):
+		// case lex.mode(ScanOperator) && strings.ContainsRune("+-*/^%<>&|!=", c):
+		case lex.mode(ScanOperator) && operator1.test(c):
 			match := 0
 			for _, op := range [][]byte{
 				[]byte("||"),
@@ -610,7 +623,7 @@ func (lex *Lexer) Scan() (Token, []byte) {
 		// prefixed binary: "0b1", "0B101"
 		case lex.mode(ScanBinary) && c == '0' && len(lex.Input) > 1 && (lex.Input[1] == 'b' || lex.Input[1] == 'B'):
 			prefix := lex.next(2) // to preserve prefix case
-			_, bytes := lex.match(func(c rune) bool { return ('0' <= c && c <= '1') || c == '_' })
+			_, bytes := lex.match(func(c rune) bool { return binary1.test(c) })
 			lex.Value = append(prefix, lex.next(bytes)...)
 			lex.Chars, lex.Bytes = len(lex.Value), len(lex.Value) // length with prefix
 			lex.Type, lex.Subtype = Number, Binary
@@ -620,7 +633,7 @@ func (lex *Lexer) Scan() (Token, []byte) {
 		// prefixed octal: "0o17", "0O237",
 		case lex.mode(ScanOctal) && c == '0' && len(lex.Input) > 1 && (lex.Input[1] == 'o' || lex.Input[1] == 'O'):
 			prefix := lex.next(2) // to preserve prefix case
-			_, bytes := lex.match(func(c rune) bool { return ('0' <= c && c <= '7') || c == '_' })
+			_, bytes := lex.match(func(c rune) bool { return octal1.test(c) })
 			lex.Value = append(prefix, lex.next(bytes)...)
 			lex.Chars, lex.Bytes = len(lex.Value), len(lex.Value) // length with prefix
 			lex.Type, lex.Subtype = Number, Octal
@@ -630,9 +643,7 @@ func (lex *Lexer) Scan() (Token, []byte) {
 		// prefixed hexadecimal: "0x399a", "0X400A"
 		case lex.mode(ScanHexadecimal) && c == '0' && len(lex.Input) > 1 && (lex.Input[1] == 'x' || lex.Input[1] == 'X'):
 			prefix := lex.next(2) // to preserve prefix case
-			_, bytes := lex.match(func(c rune) bool {
-				return ('0' <= c && c <= '9') || ('a' <= c && c <= 'f') || ('A' <= c && c <= 'F') || c == '_'
-			})
+			_, bytes := lex.match(func(c rune) bool { return hexadecimal1.test(c) })
 			lex.Value = append(prefix, lex.next(bytes)...)
 			lex.Chars, lex.Bytes = len(lex.Value), len(lex.Value) // length with prefix
 			lex.Type, lex.Subtype = Number, Hexadecimal
@@ -641,7 +652,7 @@ func (lex *Lexer) Scan() (Token, []byte) {
 			}
 		// decimal or legacy-form octal with leading zero "280", "0262"
 		case lex.mode(ScanDecimal|ScanOctal|ScanFloating) && ('0' <= c && c <= '9'):
-			lex.Chars, lex.Bytes = lex.match(func(c rune) bool { return ('0' <= c && c <= '9') || c == '_' })
+			lex.Chars, lex.Bytes = lex.match(func(c rune) bool { return decimal1.test(c) })
 			// note: matched characters>1 restriction is to treat "0" as decimal zero and "00" as octal zero.
 			if lex.Chars > 1 && lex.Input[0] == '0' && !bytes.ContainsAny(lex.Input[:lex.Bytes], "89") {
 				// matched token is legacy octal. do we want to have parsed it?
@@ -850,4 +861,46 @@ func (lex *Lexer) GetLine() []byte {
 
 	// line is range from just after last newline to just before next
 	return lex.input[prior:next]
+}
+
+type CharClass struct {
+	bits00 uint64 // bits 00..63
+	bits64 uint64 // bits 64..127
+}
+
+func newCharClass() *CharClass {
+	return &CharClass{}
+}
+
+func (c *CharClass) Byte(a byte) *CharClass {
+	switch {
+	case a < 64:
+		c.bits00 |= 1 << a
+	default:
+		c.bits64 |= 1 << (a - 64)
+	}
+	return c
+}
+
+func (c *CharClass) Range(a, b byte) *CharClass {
+	for i := a; i <= b; i++ {
+		c.Byte(i)
+	}
+	return c
+}
+
+func (c *CharClass) String(s string) *CharClass {
+	for _, ch := range s {
+		c.Byte(byte(ch))
+	}
+	return c
+}
+
+func (c *CharClass) test(a rune) bool {
+	switch {
+	case a < 64:
+		return c.bits00&(1<<a) != 0
+	default:
+		return c.bits64&(1<<(a-64)) != 0
+	}
 }
