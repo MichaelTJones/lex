@@ -342,6 +342,7 @@ var operatorMap = map[string]tokenType{
 */
 
 // character class definitions (defined once and unchanged thereafter)
+var whitespace = newCharClass().String("\t\n\r ")
 var operator0 = newCharClass().String("{}[]():;,.")   // single-character operators
 var operator1 = newCharClass().String("+-*/^%<>&|!=") // first char of muti-character operators
 var identifier1 = newCharClass().Range('a', 'z').Range('A', 'Z').Byte('_')
@@ -380,8 +381,11 @@ func (lex *Lexer) Scan() (Token, []byte) {
 		// Decode next token using this first character as anchor
 		switch {
 		// non-printing whitespace characters
-		case lex.mode(ScanSpace) && (c == '\t' || c == '\n' || c == '\r' || c == ' '):
-			lex.Chars, lex.Bytes = lex.match(func(c rune) bool { return c == '\t' || c == '\n' || c == '\r' || c == ' ' })
+		// case lex.mode(ScanSpace) && (c == '\t' || c == '\n' || c == '\r' || c == ' '):
+		// 	lex.Chars, lex.Bytes = lex.match(func(c rune) bool { return c == '\t' || c == '\n' || c == '\r' || c == ' ' })
+		case lex.mode(ScanSpace) && whitespace.test(c):
+			// lex.Chars, lex.Bytes = lex.match(func(c rune) bool { return whitespace.test(c) })
+			lex.Chars, lex.Bytes = lex.matchCharClass(whitespace)
 			lex.Value = lex.next(lex.Bytes)
 			lex.Type, lex.Subtype = Space, 0
 			if !lex.mode(SkipSpace) {
@@ -623,7 +627,8 @@ func (lex *Lexer) Scan() (Token, []byte) {
 		// prefixed binary: "0b1", "0B101"
 		case lex.mode(ScanBinary) && c == '0' && len(lex.Input) > 1 && (lex.Input[1] == 'b' || lex.Input[1] == 'B'):
 			prefix := lex.next(2) // to preserve prefix case
-			_, bytes := lex.match(func(c rune) bool { return binary1.test(c) })
+			// _, bytes := lex.match(func(c rune) bool { return binary1.test(c) })
+			_, bytes := lex.matchCharClass(binary1)
 			lex.Value = append(prefix, lex.next(bytes)...)
 			lex.Chars, lex.Bytes = len(lex.Value), len(lex.Value) // length with prefix
 			lex.Type, lex.Subtype = Number, Binary
@@ -633,7 +638,8 @@ func (lex *Lexer) Scan() (Token, []byte) {
 		// prefixed octal: "0o17", "0O237",
 		case lex.mode(ScanOctal) && c == '0' && len(lex.Input) > 1 && (lex.Input[1] == 'o' || lex.Input[1] == 'O'):
 			prefix := lex.next(2) // to preserve prefix case
-			_, bytes := lex.match(func(c rune) bool { return octal1.test(c) })
+			// _, bytes := lex.match(func(c rune) bool { return octal1.test(c) })
+			_, bytes := lex.matchCharClass(octal1)
 			lex.Value = append(prefix, lex.next(bytes)...)
 			lex.Chars, lex.Bytes = len(lex.Value), len(lex.Value) // length with prefix
 			lex.Type, lex.Subtype = Number, Octal
@@ -643,7 +649,8 @@ func (lex *Lexer) Scan() (Token, []byte) {
 		// prefixed hexadecimal: "0x399a", "0X400A"
 		case lex.mode(ScanHexadecimal) && c == '0' && len(lex.Input) > 1 && (lex.Input[1] == 'x' || lex.Input[1] == 'X'):
 			prefix := lex.next(2) // to preserve prefix case
-			_, bytes := lex.match(func(c rune) bool { return hexadecimal1.test(c) })
+			// _, bytes := lex.match(func(c rune) bool { return hexadecimal1.test(c) })
+			_, bytes := lex.matchCharClass(hexadecimal1)
 			lex.Value = append(prefix, lex.next(bytes)...)
 			lex.Chars, lex.Bytes = len(lex.Value), len(lex.Value) // length with prefix
 			lex.Type, lex.Subtype = Number, Hexadecimal
@@ -652,7 +659,8 @@ func (lex *Lexer) Scan() (Token, []byte) {
 			}
 		// decimal or legacy-form octal with leading zero "280", "0262"
 		case lex.mode(ScanDecimal|ScanOctal|ScanFloating) && ('0' <= c && c <= '9'):
-			lex.Chars, lex.Bytes = lex.match(func(c rune) bool { return decimal1.test(c) })
+			// lex.Chars, lex.Bytes = lex.match(func(c rune) bool { return decimal1.test(c) })
+			lex.Chars, lex.Bytes = lex.matchCharClass(decimal1)
 			// note: matched characters>1 restriction is to treat "0" as decimal zero and "00" as octal zero.
 			if lex.Chars > 1 && lex.Input[0] == '0' && !bytes.ContainsAny(lex.Input[:lex.Bytes], "89") {
 				// matched token is legacy octal. do we want to have parsed it?
@@ -804,6 +812,13 @@ func (lex *Lexer) match(matchFunc func(rune) bool) (chars, bytes int) {
 		c, size = utf8.DecodeRune(lex.Input[bytes:])
 	}
 	return
+}
+
+func (lex *Lexer) matchCharClass(cc *CharClass) (chars, bytes int) {
+	for bytes < len(lex.Input) && cc.test(rune(lex.Input[bytes])) {
+		bytes++
+	}
+	return bytes, bytes
 }
 
 // Move bytes from the lex input source and return them to the caller. When requested byte count is
