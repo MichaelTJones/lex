@@ -352,6 +352,14 @@ var octal1 = newCharClass().Range('0', '7').Byte('_')
 var decimal1 = newCharClass().Range('0', '9').Byte('_')
 var hexadecimal1 = newCharClass().Range('0', '9').Range('a', 'f').Range('A', 'F').Byte('_')
 
+func NewLexer(source []byte, mode uint) *Lexer {
+	return &Lexer{
+		Input:    source,
+		Mode:     mode,
+		Position: Position{Line: 1},
+	}
+}
+
 // Scan returns the next token, which is either a structured element or a single character.
 // t is the token type, such as identifier or number, and v is its value as a string, such as
 // "x" or "0153". Details (such as "ASCII-only" or "octal") are returned via the lex structure.
