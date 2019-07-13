@@ -351,6 +351,7 @@ var binary1 = newCharClass().Range('0', '1').Byte('_')
 var octal1 = newCharClass().Range('0', '7').Byte('_')
 var decimal1 = newCharClass().Range('0', '9').Byte('_')
 var hexadecimal1 = newCharClass().Range('0', '9').Range('a', 'f').Range('A', 'F').Byte('_')
+var keyword2 = newCharClass().String("aefhilmnoprtuwy") // second character of Go keyword
 
 func NewLexer(source []byte, mode uint) *Lexer {
 	return &Lexer{
@@ -544,19 +545,22 @@ func (lex *Lexer) Scan() (Token, []byte) {
 			lex.Chars, lex.Bytes = lex.match(func(c rune) bool {
 				return identifier2.test(c) || (!lex.ASCII && unicode.IsLetter(c))
 			})
-			// is it a predefined identifier? (historical note: the initial role of hash tables)
-			if id, ok := predefinedMap[string(lex.Input[:lex.Bytes])]; ok {
-				lex.Value = lex.next(lex.Bytes)
-				lex.Type, lex.Subtype = id.Type, id.Subtype
-				// if (lex.Type == Keyword && !lex.mode(SkipKeyword)) ||
-				// 	(lex.Type == Type && !lex.mode(SkipType)) ||
-				// 	(lex.Type == Other && !lex.mode(SkipOther)) {
-				// 	return lex.Type, lex.Value
-				// }
-				if !lex.mode(skipToken[-lex.Type]) {
-					return lex.Type, lex.Value
+			// is it a predefined identifier? (historical note: the initial role of hash
+			// tables)
+			if lex.Bytes >= 2 && 'a' <= c && c <= 'v' && keyword2.test(rune(lex.Input[1])) && lex.Bytes <= 15 && lex.Chars == lex.Bytes {
+				if id, ok := predefinedMap[string(lex.Input[:lex.Bytes])]; ok {
+					lex.Value = lex.next(lex.Bytes)
+					lex.Type, lex.Subtype = id.Type, id.Subtype
+					// if (lex.Type == Keyword && !lex.mode(SkipKeyword)) ||
+					// 	(lex.Type == Type && !lex.mode(SkipType)) ||
+					// 	(lex.Type == Other && !lex.mode(SkipOther)) {
+					// 	return lex.Type, lex.Value
+					// }
+					if !lex.mode(skipToken[-lex.Type]) {
+						return lex.Type, lex.Value
+					}
+					continue
 				}
-				continue
 			}
 			// ...no, so it is a user  identifier...
 			if lex.mode(ScanIdentifier) {
