@@ -346,7 +346,7 @@ var whitespace = newCharClass().String("\t\n\r ")
 var operator0 = newCharClass().String("{}[]():;,.")   // single-character operators
 var operator1 = newCharClass().String("+-*/^%<>&|!=") // first char of muti-character operators
 var identifier1 = newCharClass().Range('a', 'z').Range('A', 'Z').Byte('_')
-var identifier2 = newCharClass().Range('a', 'z').Range('A', 'Z').Byte('_').Range('0', '9')
+var identifier2 = newCharClass().Class(identifier1).Range('0', '9')
 var binary1 = newCharClass().Range('0', '1').Byte('_')
 var octal1 = newCharClass().Range('0', '7').Byte('_')
 var decimal1 = newCharClass().Range('0', '9').Byte('_')
@@ -920,6 +920,12 @@ func (c *CharClass) String(s string) *CharClass {
 	for _, ch := range s {
 		c.Byte(byte(ch))
 	}
+	return c
+}
+
+func (c *CharClass) Class(a *CharClass) *CharClass {
+	c.bits00 |= a.bits00
+	c.bits64 |= a.bits64
 	return c
 }
 
