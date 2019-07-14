@@ -628,9 +628,11 @@ func (lex *Lexer) Scan() (Token, []byte) {
 			// above uses, the back quote is also sometimes referred to as a back prime, back tick,
 			// birk, blugle, quasiquote, and unapostrophe."
 			// https://www.computerhope.com/jargon/b/backquot.htm
-			prefix := lex.next(1)                    // the leading unapostrophe
-			index := bytes.IndexByte(lex.Input, '`') // the trailing unapostrophe
-			lex.Value = append(prefix, lex.next(If(index > -1, index+1, -1))...)
+
+			index := bytes.IndexByte(lex.Input[1:], '`') // the trailing unapostrophe
+			lex.Value = lex.next(If(index > -1, index+2, -1))
+			// fmt.Printf("raw: %q\n", lex.Value)
+
 			lex.Chars, lex.Bytes = utf8.RuneCount(lex.Value), len(lex.Value)
 			lex.Type, lex.Subtype = String, Raw
 			if !lex.mode(SkipRaw) {
@@ -638,10 +640,12 @@ func (lex *Lexer) Scan() (Token, []byte) {
 			}
 		// prefixed binary: "0b1", "0B101"
 		case lex.mode(ScanBinary) && c == '0' && len(lex.Input) > 1 && (lex.Input[1] == 'b' || lex.Input[1] == 'B'):
-			prefix := lex.next(2) // to preserve prefix case
-			// _, bytes := lex.match(func(c rune) bool { return binary1.test(c) })
+			lex.Input = lex.Input[2:]
 			_, bytes := lex.matchCharClass(binary1)
-			lex.Value = append(prefix, lex.next(bytes)...)
+			lex.Input = lex.input[lex.Offset:]
+			lex.Value = lex.next(bytes + 2)
+			// fmt.Printf("raw: %q\n", lex.Value)
+
 			lex.Chars, lex.Bytes = len(lex.Value), len(lex.Value) // length with prefix
 			lex.Type, lex.Subtype = Number, Binary
 			if !lex.mode(SkipBinary) {
@@ -649,10 +653,12 @@ func (lex *Lexer) Scan() (Token, []byte) {
 			}
 		// prefixed octal: "0o17", "0O237",
 		case lex.mode(ScanOctal) && c == '0' && len(lex.Input) > 1 && (lex.Input[1] == 'o' || lex.Input[1] == 'O'):
-			prefix := lex.next(2) // to preserve prefix case
-			// _, bytes := lex.match(func(c rune) bool { return octal1.test(c) })
+			lex.Input = lex.Input[2:]
 			_, bytes := lex.matchCharClass(octal1)
-			lex.Value = append(prefix, lex.next(bytes)...)
+			lex.Input = lex.input[lex.Offset:]
+			lex.Value = lex.next(bytes + 2)
+			// fmt.Printf("raw: %q\n", lex.Value)
+
 			lex.Chars, lex.Bytes = len(lex.Value), len(lex.Value) // length with prefix
 			lex.Type, lex.Subtype = Number, Octal
 			if !lex.mode(SkipOctal) {
@@ -660,10 +666,12 @@ func (lex *Lexer) Scan() (Token, []byte) {
 			}
 		// prefixed hexadecimal: "0x399a", "0X400A"
 		case lex.mode(ScanHexadecimal) && c == '0' && len(lex.Input) > 1 && (lex.Input[1] == 'x' || lex.Input[1] == 'X'):
-			prefix := lex.next(2) // to preserve prefix case
-			// _, bytes := lex.match(func(c rune) bool { return hexadecimal1.test(c) })
+			lex.Input = lex.Input[2:]
 			_, bytes := lex.matchCharClass(hexadecimal1)
-			lex.Value = append(prefix, lex.next(bytes)...)
+			lex.Input = lex.input[lex.Offset:]
+			lex.Value = lex.next(bytes + 2)
+			// fmt.Printf("raw: %q\n", lex.Value)
+
 			lex.Chars, lex.Bytes = len(lex.Value), len(lex.Value) // length with prefix
 			lex.Type, lex.Subtype = Number, Hexadecimal
 			if !lex.mode(SkipHexadecimal) {
