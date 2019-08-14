@@ -940,8 +940,8 @@ func (c *CharClass) Class(a *CharClass) *CharClass {
 func (c *CharClass) test(a rune) bool {
 	switch {
 	case a < 64:
-		return c.bits00&(1<<a) != 0
+		return c.bits00&(1<<uint(a)) != 0
 	default:
-		return c.bits64&(1<<(a-64)) != 0
+		return c.bits64&(1<<uint(a-64)) != 0
 	}
 }
